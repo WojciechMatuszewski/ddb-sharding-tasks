@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  wojtek-write-sharding
+
+  Sample SAM Template for wojtek-write-sharding
+
+Globals:
+  Function:
+    Timeout: 5
+    Runtime: go1.x
+    Handler: handler
+    Tracing: Active
+
+Resources:
+  API:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: dev
+
+  PutTaskFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/task-saver
+      Tracing: Active
+      Policies:
+        - DynamoDBWritePolicy:
+            TableName: !Ref DataTable
+      Events:
+        PutTask:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref API
+            Path: /
+            Method: POST
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DataTable
+
+  TaskFulfiller:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: WojtekShardingTaskFulfiller
+      CodeUri: functions/task-fulfiller
+      Tracing: Active
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DataTable
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DataTable
+
+  TaskRunner:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/task-runner
+      Tracing: Active
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref DataTable
+        - LambdaInvokePolicy:
+            FunctionName: WojtekShardingTaskFulfiller
+      Events:
+        CronEvent:
+          Type: Schedule
+          Properties:
+            Enabled: True
+            Schedule: rate(1 minute)
+            Name: WojtekTestSchedule
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref DataTable
+          FULFILLER_NAME: !GetAtt TaskFulfiller.Arn
+
+  DataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+
+Outputs:
+  API:
+    Value: !Sub "https://${API}.execute-api.${AWS::Region}.${AWS::URLSuffix}/"
